@@ -118,4 +118,15 @@ $Principal = New-ScheduledTaskPrincipal -GroupId "Users" -RunLevel Limited
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force
 
 Write-Host "AVD Provisioning Complete."
+
+
+# --- Enable "Get latest updates as soon as they are available" ---
+$wuPath = "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
+if (!(Test-Path $wuPath)) { New-Item -Path $wuPath -Force }
+
+Set-ItemProperty -Path $wuPath -Name "IsAutoUpdateFeaturedControlAllowed" -Value 1 -Type DWORD -Force
+
+# Trigger a background update scan immediately
+Usoclient.exe StartScan
+
 Stop-Transcript
