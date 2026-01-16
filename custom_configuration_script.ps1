@@ -113,7 +113,7 @@ if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { Unreg
 
 $Action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File $UserScriptPath"
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
-$Principal = New-ScheduledTaskPrincipal -GroupId "Users" -Role Limited
+$Principal = New-ScheduledTaskPrincipal -GroupId "Users" -RunLevel Limited
 
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force
 
