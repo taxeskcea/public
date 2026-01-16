@@ -25,19 +25,41 @@ if (!(Test-Path "HKLM:\SOFTWARE\FSLogix")) {
     Write-Host "FSLogix Installation Complete."
 }
 
+
+
 # 1.1 FSLogix Cloud-Only Stability Keys
 # Force the path creation to ensure it exists before writing keys
 $fslogixPath = "HKLM:\SOFTWARE\FSLogix\Profiles"
+$storagePath = "\\kceafiles.file.core.windows.net\avdprofiles" # Added for 2 new statements in Core FSLogix Config below
+
+$cryptoPath  = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb" # Added for 2 statements in DPAPI / Entra ID Protection Fix below
+
 if (!(Test-Path $fslogixPath)) { 
     New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
     New-Item -Path $fslogixPath -Force 
 }
+# Core FSLogix Configuration
+Set-ItemProperty -Path $fslogixPath -Name "Enabled" -Value 1 -Type DWORD -Force # Added but not 100% sure necessary
+Set-ItemProperty -Path $fslogixPath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force # Added but not 100% sure necessary
 Set-ItemProperty -Path $fslogixPath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
 Set-ItemProperty -Path $fslogixPath -Name "IsDynamic" -Value 1 -Type DWORD -Force
 Set-ItemProperty -Path $fslogixPath -Name "DeleteLocalProfileWhenVHDShouldApply" -Value 1 -Type DWORD -Force
 
+# Force Cloud Kerberos for Azure Files (Entra ID Join Only)
+# This is a critical fix that prevented avdprofiles from working and was the last thing fixed to make it work
+$lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters"
+if (!(Test-Path $lsaPath)) { New-Item $lsaPath -Force }
+Set-ItemProperty -Path $lsaPath -Name "CloudKerberosTicketRetrievalEnabled" -Value 1 -Type DWORD -Force
+
+
+# FSLogix & Identity Hardening # 
+# DPAPI / Entra ID Protection Fix
+if (!(Test-Path $cryptoPath))  { New-Item $cryptoPath -Force }
+Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
+
 # 1.2 Network & AppX Fixes
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "GpNetworkStartTimeoutPolicyValue" -Value 60 -Type DWORD -Force
+
 $AppxPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx"
 if (-not (Test-Path $AppxPath)) { New-Item -Path $AppxPath -Force }
 Set-ItemProperty -Path $AppxPath -Name "AllowDeploymentInSpecialProfiles" -Value 1 -Type DWORD -Force
