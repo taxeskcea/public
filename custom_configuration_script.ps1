@@ -5,6 +5,24 @@
 # --- REGION 1: SYSTEM-LEVEL SETUP (Runs as SYSTEM) ---
 Write-Host "Configuring System Settings and FSLogix Cloud-Only Fixes..."
 
+
+# 1.0 Download and install FSLogix (If missing)
+if (!(Test-Path "HKLM:\SOFTWARE\FSLogix")) {
+    Write-Host "FSLogix not found. Installing..."
+    $fsLogixDownloadUrl = "https://aka.ms/fslogix_download"
+    $downloadPath = "$env:TEMP\FSLogix.zip"
+    $extractPath = "$env:TEMP\FSLogix_Extract"
+
+    Invoke-WebRequest -Uri $fsLogixDownloadUrl -OutFile $downloadPath
+    Expand-Archive -Path $downloadPath -DestinationPath $extractPath -Force
+    
+    # Run the 64-bit installer silently
+    $installer = Get-ChildItem -Path "$extractPath\x64\Release" -Filter "FSLogixAppsSetup.exe" | Select-Object -First 1
+    Start-Process -FilePath $installer.FullName -ArgumentList "/quiet", "/norestart" -Wait
+    
+    Write-Host "FSLogix Installation Complete."
+}
+
 # 1.1 FSLogix Cloud-Only Stability Keys (Per your Log)
 $fslogixPath = "HKLM:\SOFTWARE\FSLogix\Profiles"
 if (!(Test-Path $fslogixPath)) { New-Item $fslogixPath -Force }
