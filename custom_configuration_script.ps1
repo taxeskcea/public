@@ -60,7 +60,39 @@ Set-ItemProperty -Path $lsaPath -Name "CloudKerberosTicketRetrievalEnabled" -Val
 if (!(Test-Path $cryptoPath))  { New-Item $cryptoPath -Force }
 Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
 
-# 1.2 Network & AppX Fixes
+# --- 1.3 SSD PROVISIONING (Merged Logic) ---
+Write-Host "Provisioning Local NVMe SSD..."
+try {
+    # Find the NVMe disk by name rather than index number
+    $nvmeDisk = Get-Disk | Where-Object { $_.FriendlyName -like "*NVMe Direct Disk*" -or $_.Model -like "*Virtual Disk*" -and $_.Size -lt 200GB -and $_.Number -ne 0 }
+    
+    if ($null -eq $nvmeDisk) { $nvmeDisk = Get-Disk -Number 1 } # Fallback
+
+    if ($nvmeDisk.PartitionStyle -eq 'Raw') {
+        Initialize-Disk -Number $nvmeDisk.Number -PartitionStyle GPT
+        Write-Host "Disk $($nvmeDisk.Number) Initialized."
+    }
+
+    if (!(Get-Partition -DiskNumber $nvmeDisk.Number | Where-Object { $_.DriveLetter -eq 'E' })) {
+        New-Partition -DiskNumber $nvmeDisk.Number -UseMaximumSize -DriveLetter E | Format-Volume -FileSystem NTFS -NewFileSystemLabel "LocalSSD_Cache" -Confirm:$false
+        Write-Host "Partition E: created."
+    }
+    
+    if (!(Test-Path "E:\TaxDomeCache")) { New-Item -Path "E:\TaxDomeCache" -ItemType Directory -Force }
+} catch {
+    Write-Warning "SSD Provisioning failed: $($_.Exception.Message)"
+}
+
+# --- 1.3 PAGEFILE SETUP ---
+Write-Host "Setting 16GB Pagefile on E:..."
+try {
+    $ComputerSystem = Get-CimInstance Win32_ComputerSystem
+    Set-CimInstance -InputObject $ComputerSystem -Property @{AutomaticManagedPagefile = $False}
+    Get-CimInstance Win32_PageFileSetting | Remove-CimInstance -ErrorAction SilentlyContinue
+    New-CimInstance -ClassName Win32_PageFileSetting -Property @{Name = "E:\pagefile.sys"; InitialSize = 16384; MaximumSize = 16384}
+} catch { Write-Warning "Pagefile setup failed." }
+
+# 1.3.5 Network & AppX Fixes
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "GpNetworkStartTimeoutPolicyValue" -Value 60 -Type DWORD -Force
 
 $AppxPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx"
@@ -236,14 +268,6 @@ Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -
 
 Write-Host "Office configuration applied."
 
-# 1.5 Provision Local NVMe SSD for TaxDome & Paging
-Write-Host "Provisioning Local SSD (Disk 1)..."
-$ProvisionScriptUrl = "https://raw.githubusercontent.com/taxeskcea/public/refs/heads/main/Provision_local_disk_for_taxdome.ps1"
-$LocalProvScript = "C:\ProgramData\KCEA\Provision_local_disk_for_taxdome.ps1"
-
-Invoke-WebRequest -Uri $ProvisionScriptUrl -OutFile $LocalProvScript
-# Execute the provisioning script to format E: and set Pagefile
-powershell.exe -ExecutionPolicy Bypass -File $LocalProvScript
 
 # --- REGION 2: USER-CONTEXT DRIVE MAPPING (Kerberos Mode) ---
 # Drop this script onto the disk to be executed by the user at logon.
