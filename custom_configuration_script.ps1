@@ -214,26 +214,15 @@ foreach ($app in $wingetApps) {
     }
 }
 
-# --- 1.4.6: MICROSOFT 365 APPS (OFFICE) INSTALLATION ---
-Write-Host "Installing Microsoft 365 Apps (Office)..."
+# --- 1.4.6: MICROSOFT 365 APPS (OFFICE) CONFIGURATION ---
+Write-Host "Configuring pre-installed Microsoft 365 Apps for AVD..."
 
-# 1. Set Shared Computer Licensing (CRITICAL for AVD)
-# This prevents users from 'using up' their 5-device activation limit on the VM.
+# Set Shared Computer Licensing (Ensures compliance for the pre-installed suite)
 $OfficeRegPath = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
 if (!(Test-Path $OfficeRegPath)) { New-Item -Path $OfficeRegPath -Force | Out-Null }
 Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -Type DWORD -Force
 
-# 2. Install Office via Winget
-# This installs Word, Excel, Outlook, PowerPoint, etc.
-$OfficeID = "Microsoft.Office.Desktop.Apps" 
-Write-Host "Installing: $OfficeID..."
-$OfficeProcess = Start-Process winget -ArgumentList "install --id $OfficeID --silent --accept-package-agreements --accept-source-agreements --scope machine" -Wait -PassThru
-
-if ($OfficeProcess.ExitCode -ne 0) {
-    Write-Warning "Office installation failed with code $($OfficeProcess.ExitCode)."
-} else {
-    Write-Host "Successfully installed Microsoft 365 Apps."
-}
+Write-Host "Office configuration applied."
 
 # 1.5 Provision Local NVMe SSD for TaxDome & Paging
 Write-Host "Provisioning Local SSD (Disk 1)..."
