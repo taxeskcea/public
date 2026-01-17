@@ -4,8 +4,10 @@
 
 # --- 1. SETUP LOGGING ---
 $iconFolder = "C:\ProgramData\KCEA\Icons"
+$logFolder = "C:\ProgramData\KCEA\Logs"
 $LogFile = "$iconFolder\cleanup_log.txt"
 if (!(Test-Path $iconFolder)) { New-Item -Path $iconFolder -ItemType Directory -Force | Out-Null }
+if (!(Test-Path $logFolder)) { New-Item -Path $logFolder -ItemType Directory -Force | Out-Null }
 
 function Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -43,17 +45,18 @@ $packagesToRemove = @(
 foreach ($package in $packagesToRemove) {
     Log "Processing AppX: $package"
     try {
-        # Provisioned (New Users)
-        $prov = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $package -or $_.PackageName -like $package }
-        if ($prov) {
+        # Provisioned (New Users) - Loop through if multiple found
+        $provList = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $package -or $_.PackageName -like $package }
+        foreach ($prov in $provList) {
             Remove-AppxProvisionedPackage -Online -PackageName $prov.PackageName -ErrorAction Stop
-            Log "  [SUCCESS] Provisioned $package removed."
+            Log "  [SUCCESS] Provisioned $($prov.DisplayName) removed."
         }
-        # Installed (Current Users)
-        $inst = Get-AppxPackage -Name $package -AllUsers
-        if ($inst) {
+
+        # Installed (Current Users) - Loop through if multiple found
+        $instList = Get-AppxPackage -Name $package -AllUsers
+        foreach ($inst in $instList) {
             Remove-AppxPackage -Package $inst.PackageFullName -AllUsers -ErrorAction Stop
-            Log "  [SUCCESS] Installed $package removed."
+            Log "  [SUCCESS] Installed $($inst.Name) removed."
         }
     } catch { Log "  [ERROR] Failed to remove $package - $_" }
 }
