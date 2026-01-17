@@ -23,7 +23,8 @@ $wingetApps = @(
     "Adobe.Acrobat.Reader.64-bit", 
     "9N040SRQ0S8C",           # Keeper Password Manager
     "GitHub.GitHubDesktop",     # GitHub Desktop
-    "Dropbox.Dropbox.MSI"   # Enterprise version - important for FSLogix profiles
+    "Dropbox.Dropbox.MSI",   # Enterprise version - important for FSLogix profiles
+    "Microsoft.Sysinternals.Suite"
 )
 
 foreach ($app in $wingetApps) {
