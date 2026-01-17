@@ -1,7 +1,9 @@
 # =================================================================================
 # AVD Provisioning Script (System + User Context)
 # =================================================================================
-$LogFile = "C:\ProgramData\AVD_Provisioning.log"
+$LogDir = "C:\ProgramData\KCEA\Logs"
+if (!(Test-Path $LogDir)) { New-Item -Path $LogDir -ItemType Directory -Force }
+$LogFile = "$LogDir\AVD_Provisioning.log"
 Start-Transcript -Path $LogFile -Append
 
 # --- REGION 1: SYSTEM-LEVEL SETUP (Runs as SYSTEM) ---
@@ -44,6 +46,7 @@ Set-ItemProperty -Path $fslogixPath -Name "VHDLocations" -Value $storagePath -Ty
 Set-ItemProperty -Path $fslogixPath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
 Set-ItemProperty -Path $fslogixPath -Name "IsDynamic" -Value 1 -Type DWORD -Force
 Set-ItemProperty -Path $fslogixPath -Name "DeleteLocalProfileWhenVHDShouldApply" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixPath -Name "RoamSearch" -Value 1 -Type DWORD -Force
 
 # Force Cloud Kerberos for Azure Files (Entra ID Join Only)
 # This is a critical fix that prevented avdprofiles from working and was the last thing fixed to make it work
@@ -85,13 +88,170 @@ $XmlPath = "$env:SystemDrive\AppAssociations.xml"
 "@ | Out-File -FilePath $XmlPath -Encoding UTF8
 Dism /Online /Import-DefaultAppAssociations:$XmlPath
 
+# --- 1.4.2 Bloatware removal & UI Customization ---
+Write-Host "----------------------------------------------------------------"
+Write-Host "Starting Master Cleanup and UI Customization"
+
+# 1. BLOATWARE REMOVAL
+$packagesToRemove = @(
+    "Microsoft.Teams", "Microsoft.MicrosoftStickyNotes", "Microsoft.Copilot",
+    "Microsoft.Getstarted", "Microsoft.Microsoft3DViewer", "Microsoft.MicrosoftOfficeHub",
+    "Microsoft.MicrosoftSolitaireCollection", "Microsoft.MixedReality.Portal",
+    "Microsoft.Office.OneNote", "Microsoft.People", "Microsoft.SkypeApp",
+    "Microsoft.WindowsFeedbackHub", "Microsoft.WindowsMaps", "*Xbox*",
+    "Microsoft.YourPhone", "Microsoft.ZuneMusic", "Microsoft.ZuneVideo",
+    "Microsoft.WebMediaExtensions", "Clipchamp.Clipchamp", "Microsoft.BingNews",
+    "Microsoft.BingWeather", "Microsoft.OutlookForWindows", "Microsoft.BingSearch",
+    "Microsoft.WidgetsPlatformRuntime"
+)
+
+foreach ($package in $packagesToRemove) {
+    Write-Host "Processing AppX: $package"
+    try {
+        $provList = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $package -or $_.PackageName -like $package }
+        foreach ($prov in $provList) {
+            Remove-AppxProvisionedPackage -Online -PackageName $prov.PackageName -ErrorAction SilentlyContinue
+        }
+        $instList = Get-AppxPackage -Name $package -AllUsers
+        foreach ($inst in $instList) {
+            Remove-AppxPackage -Package $inst.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+        }
+    } catch { Write-Warning "Could not fully remove $package" }
+}
+
+
+# 2. DISABLE WINDOWS FEATURES
+$features = @("WindowsMediaPlayer", "WorkFolders-Client")
+foreach ($feature in $features) {
+    Write-Host "Disabling Feature: $feature"
+    Disable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart -ErrorAction SilentlyContinue
+}
+
+# 3. REGISTRY HARDENING & GALLERY REMOVAL
+Write-Host "Applying Registry Tweaks and Hiding Gallery..."
+$GalleryPath = "HKLM:\SOFTWARE\Classes\CLSID\{e88865ad-11a6-40f3-969d-762f0e0c9c41}\ShellFolder"
+if (Test-Path $GalleryPath) {
+    Set-ItemProperty -Path $GalleryPath -Name "Attributes" -Value 2962227469 -Type DWord 
+}
+
+$regSettings = @(
+    @("HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot", "TurnOffWindowsCopilot", 1),
+    @("HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures", 1)
+)
+foreach ($set in $regSettings) {
+    if (!(Test-Path $set[0])) { New-Item -Path $set[0] -Force | Out-Null }
+    Set-ItemProperty -Path $set[0] -Name $set[1] -Value $set[2] -Type DWORD
+}
+
+# Completely Disable the Widgets/News/Weather Platform UI
+$dshPath = "HKLM:\SOFTWARE\Policies\Microsoft\Dsh"
+if (!(Test-Path $dshPath)) { New-Item -Path $dshPath -Force | Out-Null }
+Set-ItemProperty -Path $dshPath -Name "AllowNewsAndInterests" -Value 0 -Type DWORD -Force
+
+# Disable the "Chat" icon (Teams Consumer) while we're at it
+$tbPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+if (!(Test-Path $tbPath)) { New-Item -Path $tbPath -Force | Out-Null }
+Set-ItemProperty -Path $tbPath -Name "ConfigureChatIcon" -Value 3 -Type DWORD -Force
+
+# Prevent OneDrive from installing for every new user
+Set-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "OneDriveSetup" -Value "" -ErrorAction SilentlyContinue
+
+# 4. DRIVE SHORTCUTS WITH ICONS
+$iconFolder = "C:\ProgramData\KCEA\Icons"
+if (!(Test-Path $iconFolder)) { New-Item -Path $iconFolder -ItemType Directory -Force | Out-Null }
+
+$kIconUrl = "https://raw.githubusercontent.com/taxeskcea/public/main/K.ico"
+$zIconUrl = "https://raw.githubusercontent.com/taxeskcea/public/main/Z.ico"
+
+try {
+    Invoke-WebRequest -Uri $kIconUrl -OutFile "$iconFolder\K.ico" -TimeoutSec 30
+    Invoke-WebRequest -Uri $zIconUrl -OutFile "$iconFolder\Z.ico" -TimeoutSec 30
+} catch { Write-Warning "Failed to download icons." }
+
+$shell = New-Object -ComObject WScript.Shell
+$driveConfig = @(
+    @{ Name = "K Drive"; Target = "K:"; Icon = "$iconFolder\K.ico" },
+    @{ Name = "Z Drive"; Target = "Z:"; Icon = "$iconFolder\Z.ico" }
+)
+
+foreach ($item in $driveConfig) {
+    $lnk = $shell.CreateShortcut("C:\Users\Public\Desktop\$($item.Name).lnk")
+    $lnk.TargetPath = "explorer.exe"
+    $lnk.Arguments = $item.Target
+    $lnk.IconLocation = "$($item.Icon), 0"
+    $lnk.Save()
+}
+
+Write-Host "Cleanup and Customization Complete."
+
+# --- 1.4.5: HEADLESS APP INSTALLATION (WINGET) ---
+Write-Host "Starting Winget App Installation..."
+
+# Winget can sometimes struggle in the SYSTEM context without a defined path
+$env:Path += ";C:\Program Files\WindowsApps"
+
+# Update Winget Source
+winget source update --force
+
+$wingetApps = @(
+    "Microsoft.PowerShell",
+    "Adobe.Acrobat.Reader.64-bit",
+    "9N040SRQ0S8C",          # Keeper
+    "GitHub.GitHubDesktop",
+    "Dropbox.Dropbox.MSI",   # Enterprise version
+    "Microsoft.Sysinternals.Suite"
+)
+
+foreach ($app in $wingetApps) {
+    Write-Host "Installing: $app..."
+    # Using --scope machine ensures it's available for ALL users (Karen, Ben, etc.)
+    $process = Start-Process winget -ArgumentList "install --id $app --silent --accept-package-agreements --accept-source-agreements --scope machine" -Wait -PassThru
+    
+    if ($process.ExitCode -ne 0) {
+        Write-Warning "Installation of $app failed with code $($process.ExitCode)."
+    } else {
+        Write-Host "Successfully installed $app."
+    }
+}
+
+# --- 1.4.6: MICROSOFT 365 APPS (OFFICE) INSTALLATION ---
+Write-Host "Installing Microsoft 365 Apps (Office)..."
+
+# 1. Set Shared Computer Licensing (CRITICAL for AVD)
+# This prevents users from 'using up' their 5-device activation limit on the VM.
+$OfficeRegPath = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
+if (!(Test-Path $OfficeRegPath)) { New-Item -Path $OfficeRegPath -Force | Out-Null }
+Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -Type DWORD -Force
+
+# 2. Install Office via Winget
+# This installs Word, Excel, Outlook, PowerPoint, etc.
+$OfficeID = "Microsoft.Office.Desktop.Apps" 
+Write-Host "Installing: $OfficeID..."
+$OfficeProcess = Start-Process winget -ArgumentList "install --id $OfficeID --silent --accept-package-agreements --accept-source-agreements --scope machine" -Wait -PassThru
+
+if ($OfficeProcess.ExitCode -ne 0) {
+    Write-Warning "Office installation failed with code $($OfficeProcess.ExitCode)."
+} else {
+    Write-Host "Successfully installed Microsoft 365 Apps."
+}
+
+# 1.5 Provision Local NVMe SSD for TaxDome & Paging
+Write-Host "Provisioning Local SSD (Disk 1)..."
+$ProvisionScriptUrl = "https://raw.githubusercontent.com/taxeskcea/public/refs/heads/main/Provision_local_disk_for_taxdome.ps1"
+$LocalProvScript = "C:\ProgramData\KCEA\Provision_local_disk_for_taxdome.ps1"
+
+Invoke-WebRequest -Uri $ProvisionScriptUrl -OutFile $LocalProvScript
+# Execute the provisioning script to format E: and set Pagefile
+powershell.exe -ExecutionPolicy Bypass -File $LocalProvScript
+
 # --- REGION 2: USER-CONTEXT DRIVE MAPPING (Kerberos Mode) ---
 # Drop this script onto the disk to be executed by the user at logon.
-$UserScriptPath = "C:\ProgramData\AVD\MapKDrive.ps1"
-if (-not (Test-Path "C:\ProgramData\AVD")) { New-Item -Path "C:\ProgramData\AVD" -ItemType Directory -Force }
+$UserScriptPath = "C:\ProgramData\KCEA\UserLogonTasks.ps1"
 
 # Using single quotes for the here-string to prevent variable expansion
 $UserScriptContent = @'
+
+# --- PART A: K DRIVE MAPPING ---
 $DriveLetter = "K:"
 $UNC = "\\kceafiles.file.core.windows.net\kcea"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -101,6 +261,29 @@ $UNC = "\\kceafiles.file.core.windows.net\kcea"
 if (-not (Get-PSDrive -Name ($DriveLetter.TrimEnd(':')) -ErrorAction SilentlyContinue)) {
     # Using 'net use' is more resilient for Kerberos identity pass-through
     net use $DriveLetter $UNC /persistent:yes
+}
+
+# --- PART B: TAXDOME SSD CACHE & JUNCTION ---
+$cachePath = "E:\TaxDomeCache\$env:USERNAME"
+$appDataTaxDome = "$env:APPDATA\TaxDome"
+
+# 1. Ensure the folder exists on the volatile E: drive
+if (!(Test-Path $cachePath)) {
+    New-Item -ItemType Directory -Path $cachePath -Force | Out-Null
+}
+
+# 2. Handle the Junction Link
+if (Test-Path $appDataTaxDome) {
+    $item = Get-Item $appDataTaxDome
+    if ($item.Attributes -notmatch "ReparsePoint") {
+        # It's a real folder, back it up and link it
+        $backup = $appDataTaxDome + "_bak"
+        if (!(Test-Path $backup)) { Move-Item -Path $appDataTaxDome -Destination $backup -Force }
+        cmd /c mklink /j "$appDataTaxDome" "$cachePath"
+    }
+} else {
+    # No folder exists, just create the link
+    cmd /c mklink /j "$appDataTaxDome" "$cachePath"
 }
 '@
 
@@ -129,4 +312,15 @@ Set-ItemProperty -Path $wuPath -Name "IsAutoUpdateFeaturedControlAllowed" -Value
 # Trigger a background update scan immediately
 Usoclient.exe StartScan
 
+# Give the Update Orchestrator 30 seconds to reach out to servers and start downloads
+Start-Sleep -Seconds 30
+
+# 1. Close the log so it is saved and readable
 Stop-Transcript
+
+# 2. Trigger the background timer (60 seconds is the sweet spot)
+# /r = reboot, /f = force apps closed, /t 60 = 60s delay, /c = comment for the event log
+& shutdown.exe /r /f /t 60 /c "AVD Provisioning complete. Rebooting to apply system changes."
+
+# 3. Explicitly exit with code 0 (Success) to tell Azure everything is perfect
+exit 0
