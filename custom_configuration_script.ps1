@@ -185,33 +185,45 @@ foreach ($item in $driveConfig) {
 Write-Host "Cleanup and Customization Complete."
 
 # --- 1.4.5: HEADLESS APP INSTALLATION (WINGET) ---
-Write-Host "Starting Winget App Installation..."
+Write-Host "Searching for Winget Path..."
 
-# Winget can sometimes struggle in the SYSTEM context without a defined path
-$env:Path += ";C:\Program Files\WindowsApps"
+# Resolve the actual path to winget.exe (which is an App Execution Alias)
+$wingetPath = Get-ChildItem -Path "C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller*_x64*\winget.exe" | Select-Object -ExpandProperty FullName -First 1
 
-# Update Winget Source
-winget source update --force
+if ($wingetPath) {
+    Write-Host "Winget found at: $wingetPath"
 
-$wingetApps = @(
-    "Microsoft.PowerShell",
-    "Adobe.Acrobat.Reader.64-bit",
-    "9N040SRQ0S8C",          # Keeper
-    "GitHub.GitHubDesktop",
-    "Dropbox.Dropbox.MSI",   # Enterprise version
-    "Microsoft.Sysinternals.Suite"
-)
+    Write-Host "Starting Winget App Installation..."
 
-foreach ($app in $wingetApps) {
-    Write-Host "Installing: $app..."
-    # Using --scope machine ensures it's available for ALL users (Karen, Ben, etc.)
-    $process = Start-Process winget -ArgumentList "install --id $app --silent --accept-package-agreements --accept-source-agreements --scope machine" -Wait -PassThru
-    
-    if ($process.ExitCode -ne 0) {
-        Write-Warning "Installation of $app failed with code $($process.ExitCode)."
-    } else {
-        Write-Host "Successfully installed $app."
-    }
+    # Winget can sometimes struggle in the SYSTEM context without a defined path
+    $env:Path += ";C:\Program Files\WindowsApps"
+
+    # Using the full path to update source since 'winget' alias isn't reliable yet
+    & $wingetPath source update --force
+
+    $wingetApps = @(
+        "Microsoft.PowerShell",
+        "Adobe.Acrobat.Reader.64-bit",
+        "9N040SRQ0S8C",          # Keeper
+        "GitHub.GitHubDesktop",
+        "Dropbox.Dropbox.MSI",   # Enterprise version
+        "Microsoft.Sysinternals.Suite"
+    )
+
+    foreach ($app in $wingetApps) {
+        Write-Host "Installing: $app..."
+            # Using the full path ensures SYSTEM context finds the executable
+            $process = Start-Process -FilePath $wingetPath -ArgumentList "install --id $app --silent --accept-package-agreements --accept-source-agreements --scope machine" -Wait -PassThru
+        
+        if ($process.ExitCode -ne 0) {
+            Write-Warning "Installation of $app failed with code $($process.ExitCode)."
+        } else {
+            Write-Host "Successfully installed $app."
+        }
+    } # End of Foreach
+} # End of If ($wingetPath)
+else {
+    Write-Error "Winget executable not found. Skipping app installations."
 }
 
 # --- 1.4.6: MICROSOFT 365 APPS (OFFICE) CONFIGURATION ---
