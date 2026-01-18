@@ -86,11 +86,16 @@ try {
 # --- 1.3 PAGEFILE SETUP ---
 Write-Host "Setting 16GB Pagefile on E:..."
 try {
+    $PageSize = [uint32]16384
     $ComputerSystem = Get-CimInstance Win32_ComputerSystem
     Set-CimInstance -InputObject $ComputerSystem -Property @{AutomaticManagedPagefile = $False}
     Get-CimInstance Win32_PageFileSetting | Remove-CimInstance -ErrorAction SilentlyContinue
-    New-CimInstance -ClassName Win32_PageFileSetting -Property @{Name = "E:\pagefile.sys"; InitialSize = 16384; MaximumSize = 16384}
-} catch { Write-Warning "Pagefile setup failed." }
+        New-CimInstance -ClassName Win32_PageFileSetting -Property @{
+        Name = "E:\pagefile.sys"; 
+        InitialSize = $PageSize; 
+        MaximumSize = $PageSize
+    }
+} catch { Write-Warning "Pagefile setup failed: $($_.Exception.Message)" }
 
 # 1.3.5 Network & AppX Fixes
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "GpNetworkStartTimeoutPolicyValue" -Value 60 -Type DWORD -Force
