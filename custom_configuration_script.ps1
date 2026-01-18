@@ -238,12 +238,13 @@ if ($wingetPath) {
     # Using the full path to update source since 'winget' alias isn't reliable yet
     & $wingetPath source update --force
 
+    # This has not worked.
+    # "Dropbox.Dropbox.MSI",   # Enterprise version
     $wingetApps = @(
         "Microsoft.PowerShell",
         "Adobe.Acrobat.Reader.64-bit",
         "9N040SRQ0S8C",          # Keeper
         "GitHub.GitHubDesktop",
-        "Dropbox.Dropbox.MSI",   # Enterprise version
         "Microsoft.Sysinternals.Suite"
     )
 
