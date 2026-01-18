@@ -240,9 +240,10 @@ if ($wingetPath) {
 
     # This has not worked. Only Karen needs this anyway.
     # "Dropbox.Dropbox.MSI",   # Enterprise version
+
     $wingetApps = @(
         "Microsoft.PowerShell",
-        "Adobe.Acrobat.Reader.64-bit",
+        "Adobe.Acrobat.Reader.64-bit", # After signing in, this will upgrade to Acrobat Pro
         "9N040SRQ0S8C",          # Keeper
         "GitHub.GitHubDesktop",
         "Microsoft.Sysinternals.Suite"
@@ -335,15 +336,31 @@ Write-Host "AVD Provisioning Complete."
 
 
 # --- Enable "Get latest updates as soon as they are available" ---
-$wuPath = "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
-if (!(Test-Path $wuPath)) { New-Item -Path $wuPath -Force }
+# --- WINDOWS UPDATE OPTIMIZATION ---
+Write-Host "Optimizing Windows Update Settings..."
 
-Set-ItemProperty -Path $wuPath -Name "IsAutoUpdateFeaturedControlAllowed" -Value 1 -Type DWORD -Force
+$wuAUPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+if (!(Test-Path $wuAUPath)) { New-Item -Path $wuAUPath -Force }
+
+# 1. Enable updates for other Microsoft products (Microsoft Update)
+Set-ItemProperty -Path $wuAUPath -Name "AllowMUUpdateService" -Value 1 -Type DWORD -Force
+
+# 2. Set Active Hours (Example: 7 AM to 10 PM)
+# This prevents reboots during the work day
+$wuSettingsPath = "HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
+if (!(Test-Path $wuSettingsPath)) { New-Item -Path $wuSettingsPath -Force }
+Set-ItemProperty -Path $wuSettingsPath -Name "ActiveHoursStart" -Value 7 -Type DWORD -Force
+Set-ItemProperty -Path $wuSettingsPath -Name "ActiveHoursEnd" -Value 22 -Type DWORD -Force
+Set-ItemProperty -Path $wuSettingsPath -Name "IsUserSpecifiedActiveHoursAllowed" -Value 1 -Type DWORD -Force
+
+# 3. Disable "Optional Updates" notifications to keep UI clean for users
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "SetUpdateNotificationLevel" -Value 0 -Type DWORD -Force
 
 # Trigger a background update scan immediately
 Usoclient.exe StartScan
 
 # Give the Update Orchestrator 30 seconds to reach out to servers and start downloads
+# It may not finish, but it will get things started and resume after reboot
 Start-Sleep -Seconds 30
 
 # 1. Close the log so it is saved and readable
