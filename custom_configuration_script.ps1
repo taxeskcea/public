@@ -238,7 +238,7 @@ if ($wingetPath) {
     # Using the full path to update source since 'winget' alias isn't reliable yet
     & $wingetPath source update --force
 
-    # This has not worked.
+    # This has not worked. Only Karen needs this anyway.
     # "Dropbox.Dropbox.MSI",   # Enterprise version
     $wingetApps = @(
         "Microsoft.PowerShell",
