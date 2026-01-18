@@ -363,12 +363,59 @@ Usoclient.exe StartScan
 # It may not finish, but it will get things started and resume after reboot
 Start-Sleep -Seconds 30
 
-# 1. Close the log so it is saved and readable
+
+# Credential management for split domain
+# --- IDENTITY FIXES FOR GODADDY / SPLIT TENANT ---
+$OfficeIdentityPath = "HKLM:\SOFTWARE\Policies\Microsoft\office\16.0\common\identity"
+if (!(Test-Path $OfficeIdentityPath)) { New-Item -Path $OfficeIdentityPath -Force }
+
+# 1. Allow the user to sign into Office with an account DIFFERENT than the Windows login
+Set-ItemProperty -Path $OfficeIdentityPath -Name "DisableADALatopWAMOverride" -Value 0 -Type DWORD -Force
+
+# 2. Disable AAD Auto-Activation (Prevents it from guessing the @onmicrosoft account)
+Set-ItemProperty -Path $OfficeIdentityPath -Name "DisableAADAutoActivation" -Value 1 -Type DWORD -Force
+
+# 3. Ensure Shared Computer Licensing is set (This is critical for AVD)
+$OfficeRegPath = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
+Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -Type DWORD -Force
+
+# Prevent Windows from trying to 'help' with the wrong Entra ID account
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\TestHooks" -Name "WebAccountManager" -Value 1 -Type DWORD -Force
+
+# --- ADOBE PERSONAL LICENSE PERSISTENCE ---
+$AdobePath   = "HKLM:\SOFTWARE\Policies\Adobe\Adobe Acrobat\DC\FeatureLockDown"
+$AdobePath64 = "HKLM:\SOFTWARE\Policies\Adobe\Acrobat Reader\DC\FeatureLockDown"
+if (!(Test-Path $AdobePath)) { New-Item -Path $AdobePath -Force }
+if (!(Test-Path $AdobePath64)) { New-Item -Path $AdobePath -Force }
+
+
+# Disable the "Sign out when browser closes" or "Clear credentials" behavior
+Set-ItemProperty -Path $AdobePath -Name "bToggleCustomAuth" -Value 1 -Type DWORD -Force
+
+# Critical for remembering passwords/tokens in a non-native Entra environment
+$cryptoPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb"
+if (!(Test-Path $cryptoPath)) { New-Item $cryptoPath -Force }
+Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
+
+# Cosmetic Adjustments
+# Delete the Edge Shortcut from the Public Desktop
+$EdgeShortcut = "C:\Users\Public\Desktop\Microsoft Edge.lnk"
+if (Test-Path $EdgeShortcut) {
+    Remove-Item -Path $EdgeShortcut -Force
+    Write-Host "Removed Microsoft Edge icon from Public Desktop."
+}
+
+# Prevent Edge from recreating the desktop shortcut on update
+$edgeUpdatePath = "HKLM:\SOFTWARE\Policies\Microsoft\EdgeUpdate"
+if (!(Test-Path $edgeUpdatePath)) { New-Item -Path $edgeUpdatePath -Force }
+Set-ItemProperty -Path $edgeUpdatePath -Name "CreateDesktopShortcutDefault" -Value 0 -Type DWORD -Force
+
+# Close the log so it is saved and readable
 Stop-Transcript
 
-# 2. Trigger the background timer (60 seconds is the sweet spot)
+# Trigger the background timer (60 seconds is the sweet spot)
 # /r = reboot, /f = force apps closed, /t 60 = 60s delay, /c = comment for the event log
 & shutdown.exe /r /f /t 60 /c "AVD Provisioning complete. Rebooting to apply system changes."
 
-# 3. Explicitly exit with code 0 (Success) to tell Azure everything is perfect
+# Explicitly exit with code 0 (Success) to tell Azure everything is perfect
 exit 0
