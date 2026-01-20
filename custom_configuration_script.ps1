@@ -42,7 +42,7 @@ if (!(Test-Path $fslogixProfilePath)) {
     New-Item -Path $fslogixProfilePath -Force 
 }
 # Core FSLogix Configuration
-Set-ItemProperty -Path $fslogixProfilePath -Name "DefaultVirtualDiskType" -Value "vhdx" -Force
+Set-ItemProperty -Path $fslogixProfilePath -Name "VolumeType" -Value "vhdx" -Force
 Set-ItemProperty -Path $fslogixProfilePath -Name "Enabled" -Value 1 -Type DWORD -Force # Added but not 100% sure necessary
 Set-ItemProperty -Path $fslogixProfilePath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force # Added but not 100% sure necessary
 Set-ItemProperty -Path $fslogixProfilePath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
@@ -56,6 +56,7 @@ if (!(Test-Path $fslogixODFCPath)) {
     New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
     New-Item -Path $fslogixODFCPath -Force 
 }
+Set-ItemProperty -Path $fslogixODFCPath -Name "VolumeType" -Value "vhdx" -Force
 Set-ItemProperty -Path $fslogixODFCPath -Name "Enabled" -Value 1 -Type DWORD -Force
 Set-ItemProperty -Path $fslogixODFCPath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
 Set-ItemProperty -Path $fslogixODFCPath -Name "IncludeOfficeActivation" -Value 1 -Type DWORD -Force
@@ -71,8 +72,11 @@ $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters"
 if (!(Test-Path $lsaPath)) { New-Item $lsaPath -Force }
 Set-ItemProperty -Path $lsaPath -Name "CloudKerberosTicketRetrievalEnabled" -Value 1 -Type DWORD -Force
 
+# Restart the FSLogix Service to ingest the new Registry Keys
+Write-Host "Restarting FSLogix Service to apply new configuration..."
+Restart-Service -Name frxsvc -Force
 
-# FSLogix & Identity Hardening # 
+
 # DPAPI / Entra ID Protection Fix
 if (!(Test-Path $cryptoPath))  { New-Item $cryptoPath -Force }
 Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
@@ -282,16 +286,54 @@ else {
     Write-Error "Winget executable not found. Skipping app installations."
 }
 
-# --- 1.4.6: MICROSOFT 365 APPS (OFFICE) CONFIGURATION ---
+
+
+# --- 1.4.7: INSTALL MICROSOFT 365 APPS VIA ODT ---
+Write-Host "Installing Microsoft 365 Apps..."
+$odtPath = "$env:TEMP\ODT"
+if (!(Test-Path $odtPath)) { New-Item $odtPath -ItemType Directory }
+
+# 1. Download the Office Deployment Tool
+$odtUrl = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4450/officedeploymenttool_17328-20162.exe"
+Invoke-WebRequest -Uri $odtUrl -OutFile "$odtPath\odt.exe"
+
+# 2. Extract it
+Start-Process -FilePath "$odtPath\odt.exe" -ArgumentList "/extract:$odtPath /quiet" -Wait
+
+# 3. Create a Configuration XML (Standard Business/Enterprise Apps)
+$xmlContent = @"
+<Configuration>
+  <Add OfficeClientEdition="64" Channel="MonthlyEnterprise">
+    <Product ID="O365ProPlusRetail">
+      <Language ID="en-us" />
+      <ExcludeApp ID="Lync" />
+      <ExcludeApp ID="Groove" />
+      <ExcludeApp ID="Bing" />
+    </Product>
+  </Add>
+  <Updates Enabled="TRUE" />
+  <RemoveMSI />
+  <Display Level="None" AcceptEULA="TRUE" />
+</Configuration>
+"@
+$xmlContent | Out-File -FilePath "$odtPath\installConfig.xml" -Encoding ascii
+
+# 4. Run the installation
+Write-Host "Running Office Installation (this may take 10-15 minutes)..."
+Start-Process -FilePath "$odtPath\setup.exe" -ArgumentList "/configure $odtPath\installConfig.xml" -Wait
+Write-Host "Microsoft 365 Apps installed successfully."
+
+# --- 1.4.8: MICROSOFT 365 APPS (OFFICE) CONFIGURATION ---
 Write-Host "Configuring pre-installed Microsoft 365 Apps for AVD..."
 
 # Set Shared Computer Licensing (Ensures compliance for the pre-installed suite)
 $OfficeRegPath = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
 if (!(Test-Path $OfficeRegPath)) { New-Item -Path $OfficeRegPath -Force | Out-Null }
-Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -Type DWORD -Force
+
+# SharedComputerLicensing should be 0 for Personal and 1 for Pooled AVDs
+Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 0 -Type DWORD -Force
 
 Write-Host "Office configuration applied."
-
 
 # --- REGION 2: USER-CONTEXT DRIVE MAPPING (Kerberos Mode) ---
 # Drop this script onto the disk to be executed by the user at logon.
@@ -402,9 +444,9 @@ Set-ItemProperty -Path $OfficeIdentityPath -Name "DisableADALatopWAMOverride" -V
 # 2. Disable AAD Auto-Activation (Prevents it from guessing the @onmicrosoft account)
 Set-ItemProperty -Path $OfficeIdentityPath -Name "DisableAADAutoActivation" -Value 1 -Type DWORD -Force
 
-# 3. Ensure Shared Computer Licensing is set (This is critical for AVD)
+# 3. Shared Computer Licensing is set earlier (1 for Pooled, 0 for Personal)
 $OfficeRegPath = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
-Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 0 -Type DWORD -Force
 
 # Prevent Windows from trying to 'help' with the wrong Entra ID account
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\TestHooks" -Name "WebAccountManager" -Value 1 -Type DWORD -Force
@@ -420,6 +462,34 @@ foreach ($path in $AdobePaths) {
     # Disable the "Sign out when browser closes" behavior
     Set-ItemProperty -Path $path -Name "bToggleCustomAuth" -Value 1 -Type DWORD -Force
 }
+
+
+# --- ADOBE ACROBAT SECURITY CUSTOMIZATION ---
+$AdobeLockdownPaths = @(
+    "HKLM:\SOFTWARE\Policies\Adobe\Adobe Acrobat\DC\FeatureLockDown",
+    "HKLM:\SOFTWARE\Policies\Adobe\Acrobat Reader\DC\FeatureLockDown"
+)
+
+foreach ($path in $AdobeLockdownPaths) {
+    if (!(Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+    
+    # 1. KEEP Protected Mode ON - Seems to be supported by TTC, but AppContainer should be off.
+    # https://tictiecalculate.zendesk.com/hc/en-us/articles/40811230517267-Enable-Protected-Mode-Pre-Requisite
+    Set-ItemProperty -Path $path -Name "bProtectedMode" -Value 1 -Type DWORD -Force
+    
+    # 2. TURN OFF Run in AppContainer
+    # This prevents the secondary AppContainer sandbox while keeping the primary Protected Mode active
+    Set-ItemProperty -Path $path -Name "bEnableProtectedModeAppContainer" -Value 0 -Type DWORD -Force
+    
+    # 3. Disable "New Acrobat" UI 
+    Set-ItemProperty -Path $path -Name "bEnableAV2Enterprise" -Value 0 -Type DWORD -Force
+}
+
+Write-Host "Adobe Security Configured: Protected Mode ON, AppContainer OFF, New UI OFF."
+
+
+
+
 
 # Critical for remembering passwords/tokens in a non-native Entra environment
 $cryptoPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb"
