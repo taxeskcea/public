@@ -31,22 +31,39 @@ if (!(Test-Path "HKLM:\SOFTWARE\FSLogix")) {
 
 # 1.1 FSLogix Cloud-Only Stability Keys
 # Force the path creation to ensure it exists before writing keys
-$fslogixPath = "HKLM:\SOFTWARE\FSLogix\Profiles"
+$fslogixProfilePath = "HKLM:\SOFTWARE\FSLogix\Profiles"
+$fslogixODCFCPath = "HKLM:\SOFTWARE\FSLogix\ODFC"
 $storagePath = "\\kceafiles.file.core.windows.net\avdprofiles" # Added for 2 new statements in Core FSLogix Config below
 
 $cryptoPath  = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb" # Added for 2 statements in DPAPI / Entra ID Protection Fix below
 
-if (!(Test-Path $fslogixPath)) { 
+if (!(Test-Path $fslogixProfilePath)) { 
     New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
-    New-Item -Path $fslogixPath -Force 
+    New-Item -Path $fslogixProfilePath -Force 
 }
 # Core FSLogix Configuration
-Set-ItemProperty -Path $fslogixPath -Name "Enabled" -Value 1 -Type DWORD -Force # Added but not 100% sure necessary
-Set-ItemProperty -Path $fslogixPath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force # Added but not 100% sure necessary
-Set-ItemProperty -Path $fslogixPath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
-Set-ItemProperty -Path $fslogixPath -Name "IsDynamic" -Value 1 -Type DWORD -Force
-Set-ItemProperty -Path $fslogixPath -Name "DeleteLocalProfileWhenVHDShouldApply" -Value 1 -Type DWORD -Force
-Set-ItemProperty -Path $fslogixPath -Name "RoamSearch" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixProfilePath -Name "DefaultVirtualDiskType" -Value "vhdx" -Force
+Set-ItemProperty -Path $fslogixProfilePath -Name "Enabled" -Value 1 -Type DWORD -Force # Added but not 100% sure necessary
+Set-ItemProperty -Path $fslogixProfilePath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force # Added but not 100% sure necessary
+Set-ItemProperty -Path $fslogixProfilePath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixProfilePath -Name "IsDynamic" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixProfilePath -Name "DeleteLocalProfileWhenVHDShouldApply" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixProfilePath -Name "RoamMSALCache" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixProfilePath -Name "RoamSearch" -Value 1 -Type DWORD -Force
+
+
+if (!(Test-Path $fslogixODFCPath)) { 
+    New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
+    New-Item -Path $fslogixODFCPath -Force 
+}
+Set-ItemProperty -Path $fslogixODFCPath -Name "Enabled" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixODFCPath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixODFCPath -Name "IncludeOfficeActivation" -Value 1 -Type DWORD -Force
+Set-ItemProperty -Path $fslogixODFCPath -Name "IncludeOutlook" -Value 1 -Type DWORD -Force
+
+# https://learn.microsoft.com/en-sg/answers/questions/5596386/office-apps-need-to-sign-in-again-and-again-at-eve
+# The RoamIdentity setting is not working.
+# FRX version 3.25.822.19044
 
 # Force Cloud Kerberos for Azure Files (Entra ID Join Only)
 # This is a critical fix that prevented avdprofiles from working and was the last thing fixed to make it work
@@ -383,19 +400,24 @@ Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\TestHooks" -Name "WebAccountManager" -Value 1 -Type DWORD -Force
 
 # --- ADOBE PERSONAL LICENSE PERSISTENCE ---
-$AdobePath   = "HKLM:\SOFTWARE\Policies\Adobe\Adobe Acrobat\DC\FeatureLockDown"
-$AdobePath64 = "HKLM:\SOFTWARE\Policies\Adobe\Acrobat Reader\DC\FeatureLockDown"
-if (!(Test-Path $AdobePath)) { New-Item -Path $AdobePath -Force }
-if (!(Test-Path $AdobePath64)) { New-Item -Path $AdobePath -Force }
+$AdobePaths = @(
+    "HKLM:\SOFTWARE\Policies\Adobe\Adobe Acrobat\DC\FeatureLockDown",
+    "HKLM:\SOFTWARE\Policies\Adobe\Acrobat Reader\DC\FeatureLockDown"
+)
 
-
-# Disable the "Sign out when browser closes" or "Clear credentials" behavior
-Set-ItemProperty -Path $AdobePath -Name "bToggleCustomAuth" -Value 1 -Type DWORD -Force
+foreach ($path in $AdobePaths) {
+    if (!(Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+    # Disable the "Sign out when browser closes" behavior
+    Set-ItemProperty -Path $path -Name "bToggleCustomAuth" -Value 1 -Type DWORD -Force
+}
 
 # Critical for remembering passwords/tokens in a non-native Entra environment
 $cryptoPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb"
 if (!(Test-Path $cryptoPath)) { New-Item $cryptoPath -Force }
 Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
+
+# Clear System-level identity stubs to prevent Token Broker loops
+Get-ChildItem -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
 # Cosmetic Adjustments
 # Delete the Edge Shortcut from the Public Desktop
