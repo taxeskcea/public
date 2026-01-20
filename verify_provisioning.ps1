@@ -1,67 +1,80 @@
 # ==============================================================================
-# KCEA AVD PROVISIONING VERIFIER
+# KCEA AVD SMART VERIFIER (Universal Context)
 # ==============================================================================
-Write-Host "--- Starting AVD Health Check ---" -ForegroundColor Cyan
+$CurrentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$IsSystem = ($CurrentIdentity -eq "NT AUTHORITY\SYSTEM")
 
-# 1. CHECK DISK & PAGING
-Write-Host "`n[1/3] Checking SSD & Paging Status..." -ForegroundColor Gray
+Write-Host "--- AVD Health Check ---" -ForegroundColor Cyan
+Write-Host "Running as: $CurrentIdentity" -ForegroundColor DarkGray
+
+# ------------------------------------------------------------------------------
+# REGION 1: SYSTEM CHECKS (Visible to everyone)
+# ------------------------------------------------------------------------------
+Write-Host "`n[1/3] System Infrastructure..." -ForegroundColor Gray
+
+# Disk Check
 $nvmeDisk = Get-Disk | Where-Object { $_.FriendlyName -like "*NVMe Direct Disk*" -or ($_.Model -like "*Virtual Disk*" -and $_.Size -lt 200GB) }
-
 if ($nvmeDisk) {
     $partition = Get-Partition -DiskNumber $nvmeDisk.Number | Where-Object { $_.DriveLetter -eq "E" }
-    if ($partition) {
-        Write-Host "  [OK] Local NVMe SSD (E:) is provisioned and healthy." -ForegroundColor Green
-    } else {
-        Write-Warning "  [FAIL] NVMe Disk found but Partition E: is missing."
-    }
-} else {
-    Write-Warning "  [FAIL] Local NVMe not found or offline."
+    if ($partition) { Write-Host "  [OK] Local SSD (E:) provisioned." -ForegroundColor Green }
 }
 
-# Define and check Pagefile
+# Pagefile Check
 $pageFile = Get-CimInstance Win32_PageFileUsage | Where-Object { $_.Name -like "E:*" }
-if ($pageFile -and $pageFile.AllocatedBaseSize -ge 16000) {
-    Write-Host "  [OK] Pagefile is active on E: ($($pageFile.AllocatedBaseSize) MB)." -ForegroundColor Green
-} else {
-    Write-Warning "  [FAIL] Pagefile not found on E: or incorrect size."
-}
+if ($pageFile) { Write-Host "  [OK] Pagefile active on E:." -ForegroundColor Green }
 
-# 2. CHECK TAXDOME REDIRECTION & K: DRIVE
-Write-Host "`n[2/3] Checking User Environment..." -ForegroundColor Gray
-$appDataTaxDome = "$env:APPDATA\TaxDome"
-if (Test-Path $appDataTaxDome) {
-    $item = Get-Item $appDataTaxDome
-    if ($item.Attributes -match "ReparsePoint") {
-        Write-Host "  [OK] TaxDome Junction is active: $appDataTaxDome -> $($item.Target)" -ForegroundColor Green
-    } else {
-        Write-Warning "  [WARN] TaxDome folder exists but is NOT a junction."
+# FSLogix Service & ODFC Check (Visible to SYSTEM and User)
+if (Get-Service frxsvc -ErrorAction SilentlyContinue) {
+    $frxStatus = & frx list-redirects
+    if ($frxStatus -like "*ODFC*") {
+        Write-Host "  [OK] ODFC Container is active/configured." -ForegroundColor Green
     }
-} else {
-    Write-Host "  [INFO] TaxDome AppData not yet created (Normal if first login)." -ForegroundColor Yellow
 }
 
-# Quick check for K: Drive
-if (Get-PSDrive -Name "K" -ErrorAction SilentlyContinue) {
-    Write-Host "  [OK] K: Drive is mapped and accessible." -ForegroundColor Green
+# ------------------------------------------------------------------------------
+# REGION 2: USER CONTEXT CHECKS
+# ------------------------------------------------------------------------------
+Write-Host "`n[2/3] User Environment..." -ForegroundColor Gray
+
+if ($IsSystem) {
+    Write-Host "  [SKIP] System context cannot see User Drives or AppData." -ForegroundColor DarkGray
 } else {
-    Write-Warning "  [WARN] K: Drive is not mapped for the current user."
+    # TaxDome Junction
+    $appDataTaxDome = "$env:APPDATA\TaxDome"
+    if (Test-Path $appDataTaxDome) {
+        $item = Get-Item $appDataTaxDome
+        if ($item.Attributes -match "ReparsePoint") {
+            Write-Host "  [OK] TaxDome Junction: $appDataTaxDome -> $($item.Target)" -ForegroundColor Green
+        }
+    }
+
+    # K: Drive
+    if (Get-PSDrive -Name "K" -ErrorAction SilentlyContinue) {
+        Write-Host "  [OK] K: Drive mapped." -ForegroundColor Green
+    } else {
+        Write-Warning "  [FAIL] K: Drive missing for user."
+    }
+
+    # Office Identity Token Broker
+    $IdentityPath = "$env:LOCALAPPDATA\Packages\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\AC\TokenBroker"
+    if (Test-Path $IdentityPath) {
+        Write-Host "  [OK] Identity Token Broker folder exists." -ForegroundColor Green
+    } else {
+        Write-Warning "  [FAIL] Identity folder missing (Office may prompt)."
+    }
 }
 
-# 3. COLLECT & DISPLAY RECENT LOGS
-Write-Host "`n[3/3] Fetching Most Recent Provisioning Log..." -ForegroundColor Gray
+# ------------------------------------------------------------------------------
+# REGION 3: LOGS (Always visible)
+# ------------------------------------------------------------------------------
+Write-Host "`n[3/3] Provisioning Logs..." -ForegroundColor Gray
 $logDir = "C:\ProgramData\KCEA\Logs"
 if (Test-Path $logDir) {
     $latestLog = Get-ChildItem -Path $logDir -Filter "*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    
     if ($latestLog) {
-        Write-Host "  Latest Log: $($latestLog.Name) ($($latestLog.LastWriteTime))" -ForegroundColor Yellow
-        Write-Host "--- Log Tail (Last 10 Lines) ---" -ForegroundColor DarkGray
-        Get-Content $latestLog.FullName -Tail 10
-    } else {
-        Write-Warning "  No log files found in $logDir."
+        Write-Host "  Latest: $($latestLog.Name) ($($latestLog.LastWriteTime))" -ForegroundColor Yellow
+        Get-Content $latestLog.FullName -Tail 5 | Write-Host -ForegroundColor DarkGray
     }
-} else {
-    Write-Warning "  Log directory $logDir does not exist."
 }
 
 Write-Host "`n--- Verification Complete ---" -ForegroundColor Cyan

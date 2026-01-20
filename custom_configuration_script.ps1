@@ -32,7 +32,7 @@ if (!(Test-Path "HKLM:\SOFTWARE\FSLogix")) {
 # 1.1 FSLogix Cloud-Only Stability Keys
 # Force the path creation to ensure it exists before writing keys
 $fslogixProfilePath = "HKLM:\SOFTWARE\FSLogix\Profiles"
-$fslogixODCFCPath = "HKLM:\SOFTWARE\FSLogix\ODFC"
+$fslogixODFCPath = "HKLM:\SOFTWARE\FSLogix\ODFC"
 $storagePath = "\\kceafiles.file.core.windows.net\avdprofiles" # Added for 2 new statements in Core FSLogix Config below
 
 $cryptoPath  = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb" # Added for 2 statements in DPAPI / Entra ID Protection Fix below
