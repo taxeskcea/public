@@ -303,13 +303,23 @@ $UserScriptContent = @'
 # --- PART A: K DRIVE MAPPING ---
 $DriveLetter = "K:"
 $UNC = "\\kceafiles.file.core.windows.net\kcea"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$MaxRetries = 5
+$RetryCount = 0
 
-# Map using the existing Kerberos ticket from the Entra ID login
-# NOT using Storage Keys here to avoid Error 1219.
-if (-not (Get-PSDrive -Name ($DriveLetter.TrimEnd(':')) -ErrorAction SilentlyContinue)) {
-    # Using 'net use' is more resilient for Kerberos identity pass-through
-    net use $DriveLetter $UNC /persistent:yes
+while ($RetryCount -lt $MaxRetries) {
+    if (-not (Get-PSDrive -Name ($DriveLetter.TrimEnd(':')) -ErrorAction SilentlyContinue)) {
+        # Attempt to map
+        net use $DriveLetter $UNC /persistent:yes
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Output "Successfully mapped K: drive."
+            break
+        } else {
+            $RetryCount++
+            Write-Output "Mapping failed. Retrying in 5 seconds... ($RetryCount/$MaxRetries)"
+            Start-Sleep -Seconds 5
+        }
+    } else { break }
 }
 
 # --- PART B: TAXDOME SSD CACHE & JUNCTION ---
