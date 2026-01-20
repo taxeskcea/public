@@ -24,13 +24,19 @@ $pageFile = Get-CimInstance Win32_PageFileUsage | Where-Object { $_.Name -like "
 if ($pageFile) { Write-Host "  [OK] Pagefile active on E:." -ForegroundColor Green }
 
 # FSLogix Service & ODFC Check (Visible to SYSTEM and User)
+$frxexe = "C:\Program Files\FSLogix\Apps\frx.exe"
 if (Get-Service frxsvc -ErrorAction SilentlyContinue) {
-    $frxStatus = & frx list-redirects
-    if ($frxStatus -like "*ODFC*") {
-        Write-Host "  [OK] ODFC Container is active/configured." -ForegroundColor Green
+    if (Test-Path $frxexe) {
+        $frxStatus = & $frxexe list-redirects
+        if ($frxStatus -like "*ODFC*") {
+            Write-Host "  [OK] ODFC Container is active/configured." -ForegroundColor Green
+        } else {
+            Write-Warning "  [WARN] FSLogix running, but ODFC redirects not found."
+        }
+    } else {
+        Write-Warning "  [FAIL] FSLogix Service active, but frx.exe missing at $frxexe"
     }
 }
-
 # ------------------------------------------------------------------------------
 # REGION 2: USER CONTEXT CHECKS
 # ------------------------------------------------------------------------------
