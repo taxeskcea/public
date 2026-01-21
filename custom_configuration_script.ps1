@@ -37,7 +37,7 @@ $storagePath = "\\kceafiles.file.core.windows.net\avdprofiles"
 
 # Ensure Paths exist
 foreach ($p in @($fslogixProfilePath, $fslogixODFCPath)) {
-    if (!(Test-Path $p)) { New-Item -Path $p -Force | Out-Null }
+    if (!(Test-Path $p)) { New-Item -Path $p -Force -ErrorAction SilentlyContinue | Out-Null }
 }
 
 # Core Profile Settings
@@ -169,53 +169,74 @@ Restart-Service -Name frxsvc -Force
 
 
 # --- 1.3 SSD PROVISIONING (Universal v4/v6 Logic) ---
-Write-Host "Provisioning Local NVMe SSD..."
+# https://learn.microsoft.com/en-us/azure/virtual-machines/enable-nvme-temp-faqs
+
+Write-Host "Provisioning Local SSD / NVMe cache disk..."
+
+# --- Step 0: Remove drive letters from CD/DVD so they don't steal E: ---
 try {
-    # 1. Clear the 'E' slot (Evict CD-ROM/DVD)
-    if (Get-PSDrive -Name "E" -ErrorAction SilentlyContinue) {
-        Write-Host "E: is occupied. Moving current E: to R:..."
-        "select volume E`nassign letter=R" | diskpart
-        Start-Sleep -Seconds 2
-    }
-
-    # 2. Find the SSD: Ignore Disk 0, Target < 300GB (covers v4's 150GB and v6's 220GB)
-    $nvmeDisk = Get-Disk | Where-Object { $_.Number -ne 0 -and $_.Size -lt 300GB } | Select-Object -First 1
-    
-    if ($null -ne $nvmeDisk) {
-        Write-Host "Found target SSD: Disk $($nvmeDisk.Number) ($($nvmeDisk.FriendlyName))"
-
-        # 3. Handle RAW disks (New deployments)
-        if ($nvmeDisk.PartitionStyle -eq 'Raw') {
-            Initialize-Disk -Number $nvmeDisk.Number -PartitionStyle GPT
-            New-Partition -DiskNumber $nvmeDisk.Number -UseMaximumSize -DriveLetter E | Format-Volume -FileSystem NTFS -NewFileSystemLabel "LocalSSD_Cache" -Confirm:$false
-            Write-Host "Disk initialized and Partition E: created."
-        } 
-        else {
-            # 4. Handle existing partitions with WRONG letters (Fixes Ben's 'D:' issue)
-            $part = Get-Partition -DiskNumber $nvmeDisk.Number | Where-Object { $_.DriveLetter -ne 'E' } | Select-Object -First 1
-            if ($null -ne $part) {
-                Write-Host "Fixing drive letter: Changing Disk $($nvmeDisk.Number) from $($part.DriveLetter): to E:..."
-                Set-Partition -DiskNumber $nvmeDisk.Number -PartitionNumber $part.PartitionNumber -NewDriveLetter E
-            }
-            
-            # 5. Handle existing partitions with NO letter
-            $noLetter = Get-Partition -DiskNumber $nvmeDisk.Number | Where-Object { $_.DriveLetter -eq $null } | Select-Object -First 1
-            if ($null -ne $noLetter) {
-                Set-Partition -DiskNumber $nvmeDisk.Number -PartitionNumber $noLetter.PartitionNumber -NewDriveLetter E
-            }
+    Get-Volume | Where-Object DriveType -eq 'CD-ROM' | ForEach-Object {
+        if ($_.DriveLetter) {
+            Write-Host "Removing drive letter $($_.DriveLetter) from CD/DVD device..."
+            Set-Volume -DriveLetter $_.DriveLetter -NewDriveLetter $null
         }
-        
-        # 6. Ensure the directory exists for TaxDome
-        if (!(Test-Path "E:\TaxDomeCache")) { 
-            New-Item -Path "E:\TaxDomeCache" -ItemType Directory -Force | Out-Null
-            Write-Host "TaxDomeCache directory verified on E:."
-        }
-    } else {
-        Write-Warning "No secondary SSD found under 300GB."
     }
 } catch {
-    Write-Warning "SSD Provisioning failed: $($_.Exception.Message)"
+    Write-Warning "Could not modify CD/DVD drive letter: $($_.Exception.Message)"
 }
+
+# --- Step 1: Find the temp/local SSD disk (not OS disk) ---
+try {
+    # Candidate disks: not Disk 0, not USB, not huge, not empty
+    $candidateDisks = Get-Disk | Where-Object {
+        $_.Number -ne 0 -and
+        $_.Size -lt 350GB -and
+        $_.BusType -ne 'USB'
+    } | Sort-Object Size
+
+    $cacheDisk = $candidateDisks | Select-Object -First 1
+
+    if (-not $cacheDisk) {
+        Write-Warning "No suitable cache disk found."
+        return
+    }
+
+    Write-Host "Selected cache disk: Disk $($cacheDisk.Number) Size=$([math]::Round($cacheDisk.Size/1GB))GB Bus=$($cacheDisk.BusType) FriendlyName=$($cacheDisk.FriendlyName)"
+
+    # --- Step 2: Initialize/format if RAW ---
+    if ($cacheDisk.PartitionStyle -eq 'RAW') {
+        Write-Host "Disk is RAW. Initializing + creating partition E:..."
+        Initialize-Disk -Number $cacheDisk.Number -PartitionStyle GPT -ErrorAction Stop
+
+        New-Partition -DiskNumber $cacheDisk.Number -UseMaximumSize -DriveLetter E |
+            Format-Volume -FileSystem NTFS -NewFileSystemLabel "LocalSSD_Cache" -Confirm:$false
+    }
+
+    # --- Step 3: Ensure it has drive letter E: ---
+    $vol = Get-Volume | Where-Object { $_.FileSystemLabel -eq "LocalSSD_Cache" -or $_.DriveLetter -eq "E" } | Select-Object -First 1
+
+    if (-not $vol) {
+        # If we formatted earlier, it should exist. Otherwise try to locate first partition.
+        $part = Get-Partition -DiskNumber $cacheDisk.Number | Where-Object { $_.Type -ne 'Reserved' } | Select-Object -First 1
+        if ($part -and $part.DriveLetter -ne 'E') {
+            Write-Host "Assigning drive letter E: to cache partition..."
+            Set-Partition -DiskNumber $cacheDisk.Number -PartitionNumber $part.PartitionNumber -NewDriveLetter E
+        }
+    }
+
+    # --- Step 4: Create cache folder ---
+    if (!(Test-Path "E:\TaxDomeCache")) {
+        New-Item -Path "E:\TaxDomeCache" -ItemType Directory -Force | Out-Null
+    }
+
+    Write-Host "Cache disk provisioning complete."
+
+} catch {
+    Write-Warning "Cache disk provisioning failed: $($_.Exception.Message)"
+}
+
+
+
 
 # --- 1.3 PAGEFILE SETUP ---
 Write-Host "Setting 16GB Pagefile on E:..."
