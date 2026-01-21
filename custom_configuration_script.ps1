@@ -33,14 +33,14 @@ if (!(Test-Path "HKLM:\SOFTWARE\FSLogix")) {
 # Force the path creation to ensure it exists before writing keys
 $fslogixProfilePath = "HKLM:\SOFTWARE\FSLogix\Profiles"
 $fslogixODFCPath = "HKLM:\SOFTWARE\Policies\FSLogix\ODFC"
-$storagePath = "\\kceafiles.file.core.windows.net\avdprofiles" # Added for 2 new statements in Core FSLogix Config below
+$storagePath = "\\kceafiles.file.core.windows.net\avdprofiles"
 
-if (!(Test-Path $fslogixProfilePath)) { 
-    New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
-    New-Item -Path $fslogixProfilePath -Force 
+# Ensure Paths exist
+foreach ($p in @($fslogixProfilePath, $fslogixODFCPath)) {
+    if (!(Test-Path $p)) { New-Item -Path $p -Force | Out-Null }
 }
-# Core FSLogix Configuration
 
+# Core Profile Settings
 Set-ItemProperty -Path $fslogixProfilePath -Name "VolumeType" -Value "vhdx" -Type String -Force
 # Type: REG_SZ
 # Default Value: vhd
@@ -107,6 +107,7 @@ if (!(Test-Path $fslogixODFCPath)) {
     New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
     New-Item -Path $fslogixODFCPath -Force 
 }
+
 Set-ItemProperty -Path $fslogixODFCPath -Name "VolumeType" -Type String -Value "vhdx" -Force
 # Type: REG_SZ
 # Default Value: vhd
@@ -121,6 +122,15 @@ Set-ItemProperty -Path $fslogixODFCPath -Name "Enabled" -Value 1 -Type DWORD -Fo
 # 0: ODFC containers disabled.
 # 1: ODFC containers enabled
 
+Set-ItemProperty -Path $fslogixODFCPath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force
+# (required setting)
+# Type: MULTI_SZ or REG_SZ
+# Default Value: N/A
+# Data values and use:
+# A list of SMB locations to search for the user's ODFC VHD(x) file. If one isn't found, one is created 
+# in the first listed location. If the VHD path doesn't exist, it creates it before it checks if a VHD(x) exists 
+# in the path. The path supports the use of the FSLogix custom variables or any environment variables that are 
+# available to the user during the sign in process. When specified as a REG_SZ value, multiple locations must be separated with a semi-colon (;).
 
 Set-ItemProperty -Path $fslogixODFCPath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
 # Not sure this exists under ODFC Path - the one in the main FSLogix path appears to be the old/less supported way to get around
@@ -158,25 +168,51 @@ Write-Host "Restarting FSLogix Service to apply new configuration..."
 Restart-Service -Name frxsvc -Force
 
 
-# --- 1.3 SSD PROVISIONING (Merged Logic) ---
+# --- 1.3 SSD PROVISIONING (Universal v4/v6 Logic) ---
 Write-Host "Provisioning Local NVMe SSD..."
 try {
-    # Find the NVMe disk by name rather than index number
-    $nvmeDisk = Get-Disk | Where-Object { $_.FriendlyName -like "*NVMe Direct Disk*" -or $_.Model -like "*Virtual Disk*" -and $_.Size -lt 200GB -and $_.Number -ne 0 }
-    
-    if ($null -eq $nvmeDisk) { $nvmeDisk = Get-Disk -Number 1 } # Fallback
-
-    if ($nvmeDisk.PartitionStyle -eq 'Raw') {
-        Initialize-Disk -Number $nvmeDisk.Number -PartitionStyle GPT
-        Write-Host "Disk $($nvmeDisk.Number) Initialized."
+    # 1. Clear the 'E' slot (Evict CD-ROM/DVD)
+    if (Get-PSDrive -Name "E" -ErrorAction SilentlyContinue) {
+        Write-Host "E: is occupied. Moving current E: to R:..."
+        "select volume E`nassign letter=R" | diskpart
+        Start-Sleep -Seconds 2
     }
 
-    if (!(Get-Partition -DiskNumber $nvmeDisk.Number | Where-Object { $_.DriveLetter -eq 'E' })) {
-        New-Partition -DiskNumber $nvmeDisk.Number -UseMaximumSize -DriveLetter E | Format-Volume -FileSystem NTFS -NewFileSystemLabel "LocalSSD_Cache" -Confirm:$false
-        Write-Host "Partition E: created."
-    }
+    # 2. Find the SSD: Ignore Disk 0, Target < 300GB (covers v4's 150GB and v6's 220GB)
+    $nvmeDisk = Get-Disk | Where-Object { $_.Number -ne 0 -and $_.Size -lt 300GB } | Select-Object -First 1
     
-    if (!(Test-Path "E:\TaxDomeCache")) { New-Item -Path "E:\TaxDomeCache" -ItemType Directory -Force }
+    if ($null -ne $nvmeDisk) {
+        Write-Host "Found target SSD: Disk $($nvmeDisk.Number) ($($nvmeDisk.FriendlyName))"
+
+        # 3. Handle RAW disks (New deployments)
+        if ($nvmeDisk.PartitionStyle -eq 'Raw') {
+            Initialize-Disk -Number $nvmeDisk.Number -PartitionStyle GPT
+            New-Partition -DiskNumber $nvmeDisk.Number -UseMaximumSize -DriveLetter E | Format-Volume -FileSystem NTFS -NewFileSystemLabel "LocalSSD_Cache" -Confirm:$false
+            Write-Host "Disk initialized and Partition E: created."
+        } 
+        else {
+            # 4. Handle existing partitions with WRONG letters (Fixes Ben's 'D:' issue)
+            $part = Get-Partition -DiskNumber $nvmeDisk.Number | Where-Object { $_.DriveLetter -ne 'E' } | Select-Object -First 1
+            if ($null -ne $part) {
+                Write-Host "Fixing drive letter: Changing Disk $($nvmeDisk.Number) from $($part.DriveLetter): to E:..."
+                Set-Partition -DiskNumber $nvmeDisk.Number -PartitionNumber $part.PartitionNumber -NewDriveLetter E
+            }
+            
+            # 5. Handle existing partitions with NO letter
+            $noLetter = Get-Partition -DiskNumber $nvmeDisk.Number | Where-Object { $_.DriveLetter -eq $null } | Select-Object -First 1
+            if ($null -ne $noLetter) {
+                Set-Partition -DiskNumber $nvmeDisk.Number -PartitionNumber $noLetter.PartitionNumber -NewDriveLetter E
+            }
+        }
+        
+        # 6. Ensure the directory exists for TaxDome
+        if (!(Test-Path "E:\TaxDomeCache")) { 
+            New-Item -Path "E:\TaxDomeCache" -ItemType Directory -Force | Out-Null
+            Write-Host "TaxDomeCache directory verified on E:."
+        }
+    } else {
+        Write-Warning "No secondary SSD found under 300GB."
+    }
 } catch {
     Write-Warning "SSD Provisioning failed: $($_.Exception.Message)"
 }
