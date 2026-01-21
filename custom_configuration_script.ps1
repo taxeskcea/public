@@ -32,35 +32,113 @@ if (!(Test-Path "HKLM:\SOFTWARE\FSLogix")) {
 # 1.1 FSLogix Cloud-Only Stability Keys
 # Force the path creation to ensure it exists before writing keys
 $fslogixProfilePath = "HKLM:\SOFTWARE\FSLogix\Profiles"
-$fslogixODFCPath = "HKLM:\SOFTWARE\FSLogix\ODFC"
+$fslogixODFCPath = "HKLM:\SOFTWARE\Policies\FSLogix\ODFC"
 $storagePath = "\\kceafiles.file.core.windows.net\avdprofiles" # Added for 2 new statements in Core FSLogix Config below
-
-$cryptoPath  = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb" # Added for 2 statements in DPAPI / Entra ID Protection Fix below
 
 if (!(Test-Path $fslogixProfilePath)) { 
     New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
     New-Item -Path $fslogixProfilePath -Force 
 }
 # Core FSLogix Configuration
-Set-ItemProperty -Path $fslogixProfilePath -Name "VolumeType" -Value "vhdx" -Force
-Set-ItemProperty -Path $fslogixProfilePath -Name "Enabled" -Value 1 -Type DWORD -Force # Added but not 100% sure necessary
-Set-ItemProperty -Path $fslogixProfilePath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force # Added but not 100% sure necessary
-Set-ItemProperty -Path $fslogixProfilePath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
-Set-ItemProperty -Path $fslogixProfilePath -Name "IsDynamic" -Value 1 -Type DWORD -Force
-Set-ItemProperty -Path $fslogixProfilePath -Name "DeleteLocalProfileWhenVHDShouldApply" -Value 1 -Type DWORD -Force
-Set-ItemProperty -Path $fslogixProfilePath -Name "RoamMSALCache" -Value 1 -Type DWORD -Force
-Set-ItemProperty -Path $fslogixProfilePath -Name "RoamSearch" -Value 1 -Type DWORD -Force
 
+Set-ItemProperty -Path $fslogixProfilePath -Name "VolumeType" -Value "vhdx" -Type String -Force
+# Type: REG_SZ
+# Default Value: vhd
+# Data values and use:
+# A value of vhd means that newly created files should be of type VHD. A value of vhdx means that newly created files should be of type VHDX.
+
+
+Set-ItemProperty -Path $fslogixProfilePath -Name "Enabled" -Value 1 -Type DWORD -Force 
+# (required setting)
+# Type: DWORD
+# Default Value: 0
+# Data values and use:
+# 0: Profile containers disabled.
+# 1: Profile containers enabled.
+
+Set-ItemProperty -Path $fslogixProfilePath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force # Added but not 100% sure necessary
+# (required setting)
+# Type: MULTI_SZ or REG_SZ
+# Default Value: N/A
+# Data values and use:
+# A list of SMB locations to search for the user's profile VHD(x) file. If one isn't found, one is created 
+# in the first listed location. If the VHD path doesn't exist, it creates it before it checks if a VHD(x) exists 
+# in the path. The path supports the use of the FSLogix custom variables or any environment variables that are 
+# available to the user during the sign in process. When specified as a REG_SZ value, multiple locations must be separated with a semi-colon (;).
+
+
+Set-ItemProperty -Path $fslogixProfilePath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
+# 0: Don't roam identity data. (recommended)
+# 1: Enables legacy roaming for identity data.
+# Under some identity and authentication scenarios, user's may be required to authenticate to their Microsoft 365 applications 
+# at every sign-in. Enabling this setting is one way to resolve the issue. We recommend working towards true single sign-on 
+# which allows your Windows sign-in to pass its credential to your Microsoft 365 applications.
+# Useful references
+# https://learn.microsoft.com/en-us/fslogix/troubleshooting-known-issues
+
+Set-ItemProperty -Path $fslogixProfilePath -Name "IsDynamic" -Value 1 -Type DWORD -Force
+# Type: DWORD
+# Default Value: 1
+# Data values and use:
+# 0: VHD(x) is of a fixed size and the size on disk is fully allocated.
+# 1: VHD(x) is dynamic and only increases the size on disk as necessary.
+
+Set-ItemProperty -Path $fslogixProfilePath -Name "DeleteLocalProfileWhenVHDShouldApply" -Value 1 -Type DWORD -Force
+# Type: DWORD
+# Default Value: 0
+# Data values and use:
+# 0: No action.
+# 1: Deletes local profile if it exists and matches the profile container.
+
+# NO SUCH REGISTRY SETTING 
+# Set-ItemProperty -Path $fslogixProfilePath -Name "RoamMSALCache" -Value 1 -Type DWORD -Force
+
+# Set-ItemProperty -Path $fslogixProfilePath -Name "RoamSearch" -Value 1 -Type DWORD -Force
+# OBSOLETE There are no override settings to enable the FSLogix search roaming when it's automatically disabled through Windows version detection.
+# Type: DWORD
+# Default Value: 0
+# Data values and use:
+# 0: Disabled.
+# 1: Enable single-user search.
+# 2: Enable multi-user search.
+#
 
 if (!(Test-Path $fslogixODFCPath)) { 
     New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
     New-Item -Path $fslogixODFCPath -Force 
 }
-Set-ItemProperty -Path $fslogixODFCPath -Name "VolumeType" -Value "vhdx" -Force
+Set-ItemProperty -Path $fslogixODFCPath -Name "VolumeType" -Type String -Value "vhdx" -Force
+# Type: REG_SZ
+# Default Value: vhd
+# Data values and use:
+# A value of vhd means that newly created files should be of type VHD. A value of vhdx means that newly created files should be of type VHDX.
+
 Set-ItemProperty -Path $fslogixODFCPath -Name "Enabled" -Value 1 -Type DWORD -Force
+# (required setting)
+# Type: DWORD
+# Default Value: 0
+# Data values and use:
+# 0: ODFC containers disabled.
+# 1: ODFC containers enabled
+
+
 Set-ItemProperty -Path $fslogixODFCPath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
+# Not sure this exists under ODFC Path - the one in the main FSLogix path appears to be the old/less supported way to get around
+# the situation where you're not logging in as the licensed Office user.
+
 Set-ItemProperty -Path $fslogixODFCPath -Name "IncludeOfficeActivation" -Value 1 -Type DWORD -Force
+# Type: DWORD
+# Default Value: 1
+# Data values and use:
+# 0: Office activation data isn't redirected to the container.
+
+
 Set-ItemProperty -Path $fslogixODFCPath -Name "IncludeOutlook" -Value 1 -Type DWORD -Force
+# Type: DWORD
+# Default Value: 1
+# Data values and use:
+# 0: Outlook data isn't redirected to the container.
+# 1: Outlook data is redirected to the container.
 
 # https://learn.microsoft.com/en-sg/answers/questions/5596386/office-apps-need-to-sign-in-again-and-again-at-eve
 # The RoamIdentity setting is not working.
@@ -71,15 +149,14 @@ Set-ItemProperty -Path $fslogixODFCPath -Name "IncludeOutlook" -Value 1 -Type DW
 $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters"
 if (!(Test-Path $lsaPath)) { New-Item $lsaPath -Force }
 Set-ItemProperty -Path $lsaPath -Name "CloudKerberosTicketRetrievalEnabled" -Value 1 -Type DWORD -Force
+# Enable the Microsoft Entra Kerberos functionality on the client machine(s) you want to mount/use Azure File shares from.
+# You must do this on every client on which Azure Files will be used.
+# Changes aren't instant, and require a policy refresh or a reboot to take effect
 
 # Restart the FSLogix Service to ingest the new Registry Keys
 Write-Host "Restarting FSLogix Service to apply new configuration..."
 Restart-Service -Name frxsvc -Force
 
-
-# DPAPI / Entra ID Protection Fix
-if (!(Test-Path $cryptoPath))  { New-Item $cryptoPath -Force }
-Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
 
 # --- 1.3 SSD PROVISIONING (Merged Logic) ---
 Write-Host "Provisioning Local NVMe SSD..."
@@ -119,7 +196,8 @@ try {
 } catch { Write-Warning "Pagefile setup failed: $($_.Exception.Message)" }
 
 # 1.3.5 Network & AppX Fixes
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "GpNetworkStartTimeoutPolicyValue" -Value 60 -Type DWORD -Force
+# Disabling this as it's unclear this is a current setting or what led to this suggestions
+# Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "GpNetworkStartTimeoutPolicyValue" -Value 60 -Type DWORD -Force
 
 $AppxPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Appx"
 if (-not (Test-Path $AppxPath)) { New-Item -Path $AppxPath -Force }
@@ -186,11 +264,13 @@ foreach ($feature in $features) {
 }
 
 # 3. REGISTRY HARDENING & GALLERY REMOVAL
-Write-Host "Applying Registry Tweaks and Hiding Gallery..."
-$GalleryPath = "HKLM:\SOFTWARE\Classes\CLSID\{e88865ad-11a6-40f3-969d-762f0e0c9c41}\ShellFolder"
-if (Test-Path $GalleryPath) {
-    Set-ItemProperty -Path $GalleryPath -Name "Attributes" -Value 2962227469 -Type DWord 
-}
+# Doubtful that there's a supported way to disable the Gallery
+# Commenting out this code for now.
+# Write-Host "Applying Registry Tweaks and Hiding Gallery..."
+# $GalleryPath = "HKLM:\SOFTWARE\Classes\CLSID\{e88865ad-11a6-40f3-969d-762f0e0c9c41}\ShellFolder"
+# if (Test-Path $GalleryPath) {
+#     Set-ItemProperty -Path $GalleryPath -Name "Attributes" -Value 2962227469 -Type DWord 
+# }
 
 $regSettings = @(
     @("HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot", "TurnOffWindowsCopilot", 1),
@@ -261,10 +341,11 @@ if ($wingetPath) {
 
     # This has not worked. Only Karen needs this anyway.
     # "Dropbox.Dropbox.MSI",   # Enterprise version
+    # Remove Adobe for now as new Adobe for Teams licensing model may not be happy with it.
+    # "Adobe.Acrobat.Reader.64-bit", # After signing in, this will upgrade to Acrobat Pro 
 
     $wingetApps = @(
         "Microsoft.PowerShell",
-        "Adobe.Acrobat.Reader.64-bit", # After signing in, this will upgrade to Acrobat Pro
         "9N040SRQ0S8C",          # Keeper
         "GitHub.GitHubDesktop",
         "Microsoft.Sysinternals.Suite"
@@ -289,16 +370,16 @@ else {
 
 
 # --- 1.4.7: INSTALL MICROSOFT 365 APPS VIA ODT ---
-Write-Host "Installing Microsoft 365 Apps..."
+########## DISBALED ########## Write-Host "Installing Microsoft 365 Apps..."
 $odtPath = "$env:TEMP\ODT"
-if (!(Test-Path $odtPath)) { New-Item $odtPath -ItemType Directory }
+########## DISBALED ########## if (!(Test-Path $odtPath)) { New-Item $odtPath -ItemType Directory }
 
 # 1. Download the Office Deployment Tool
 $odtUrl = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4450/officedeploymenttool_17328-20162.exe"
-Invoke-WebRequest -Uri $odtUrl -OutFile "$odtPath\odt.exe"
+########## DISBALED ########## Invoke-WebRequest -Uri $odtUrl -OutFile "$odtPath\odt.exe"
 
 # 2. Extract it
-Start-Process -FilePath "$odtPath\odt.exe" -ArgumentList "/extract:$odtPath /quiet" -Wait
+########## DISBALED ########## Start-Process -FilePath "$odtPath\odt.exe" -ArgumentList "/extract:$odtPath /quiet" -Wait
 
 # 3. Create a Configuration XML (Standard Business/Enterprise Apps)
 $xmlContent = @"
@@ -316,22 +397,29 @@ $xmlContent = @"
   <Display Level="None" AcceptEULA="TRUE" />
 </Configuration>
 "@
-$xmlContent | Out-File -FilePath "$odtPath\installConfig.xml" -Encoding ascii
+########## DISBALED ########## $xmlContent | Out-File -FilePath "$odtPath\installConfig.xml" -Encoding ascii
 
 # 4. Run the installation
-Write-Host "Running Office Installation (this may take 10-15 minutes)..."
-Start-Process -FilePath "$odtPath\setup.exe" -ArgumentList "/configure $odtPath\installConfig.xml" -Wait
-Write-Host "Microsoft 365 Apps installed successfully."
+########## DISBALED ########## Write-Host "Running Office Installation (this may take 10-15 minutes)..."
+########## DISBALED ########## Start-Process -FilePath "$odtPath\setup.exe" -ArgumentList "/configure $odtPath\installConfig.xml" -Wait
+########## DISBALED ########## Write-Host "Microsoft 365 Apps installed successfully."
 
 # --- 1.4.8: MICROSOFT 365 APPS (OFFICE) CONFIGURATION ---
-Write-Host "Configuring pre-installed Microsoft 365 Apps for AVD..."
+########## DISBALED ########## Write-Host "Configuring pre-installed Microsoft 365 Apps for AVD..."
 
 # Set Shared Computer Licensing (Ensures compliance for the pre-installed suite)
 $OfficeRegPath = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
 if (!(Test-Path $OfficeRegPath)) { New-Item -Path $OfficeRegPath -Force | Out-Null }
 
-# SharedComputerLicensing should be 0 for Personal and 1 for Pooled AVDs
-Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 0 -Type DWORD -Force
+# SharedComputerLicensing - should be aligned to the configuration.xml launched for office install.
+Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 1 -Type String -Force
+# https://learn.microsoft.com/en-us/microsoft-365-apps/licensing-activation/overview-shared-computer-activation
+# Option 2: Use Registry Editor to enable shared computer activation
+# Use Registry Editor to add a String value (Reg_SZ) of SharedComputerLicensing with a setting of 1 
+# under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\Configuration.
+
+# Impoortant to verify how we end up per these instructions
+# https://learn.microsoft.com/en-us/microsoft-365-apps/licensing-activation/troubleshoot-shared-computer-activation#Enabled
 
 Write-Host "Office configuration applied."
 
@@ -348,20 +436,42 @@ $UNC = "\\kceafiles.file.core.windows.net\kcea"
 $MaxRetries = 5
 $RetryCount = 0
 
+# 1. Wait up to 30 seconds for Kerberos to be ready
+$timeout = 30
+while (!(klist | Select-String "kceafiles") -and $timeout -gt 0) {
+    Write-Output "Waiting for Kerberos to be ready (T-minus: $timeout)"
+    Start-Sleep -Seconds 2
+    $timeout -= 2
+}
+
+$CleanLetter = $DriveLetter.TrimEnd(':')
+
 while ($RetryCount -lt $MaxRetries) {
-    if (-not (Get-PSDrive -Name ($DriveLetter.TrimEnd(':')) -ErrorAction SilentlyContinue)) {
-        # Attempt to map
-        net use $DriveLetter $UNC /persistent:yes
-        
-        if ($LASTEXITCODE -eq 0) {
-            Write-Output "Successfully mapped K: drive."
-            break
-        } else {
-            $RetryCount++
-            Write-Output "Mapping failed. Retrying in 5 seconds... ($RetryCount/$MaxRetries)"
-            Start-Sleep -Seconds 5
+    # Check if the drive is already mapped
+    if (-not (Get-PSDrive -Name $CleanLetter -ErrorAction SilentlyContinue)) {
+        try {
+            Write-Output "Attempting to map $DriveLetter to $UNC (Attempt $($RetryCount + 1))..."
+            # Attempt to map
+            # net use $DriveLetter $UNC /persistent:yes
+            # Using New-PSDrive with -Persist is more robust for Entra ID sessions
+            New-PSDrive -Name $CleanLetter -PSProvider FileSystem -Root $UNC -Persist -Scope Global -ErrorAction Stop
+            
+            Write-Output "Successfully mapped $DriveLetter drive."
+            break # Exit the loop on success
+        } 
+        catch {
+                $RetryCount++
+            Write-Warning "Mapping failed: $($_.Exception.Message)"
+            if ($RetryCount -lt $MaxRetries) {
+                Write-Output "Retrying in 5 seconds..."
+                Start-Sleep -Seconds 5
+            }
         }
-    } else { break }
+    } 
+    else {
+        Write-Output "$DriveLetter drive is already mapped."
+        break
+    }
 }
 
 # --- PART B: TAXDOME SSD CACHE & JUNCTION ---
@@ -444,12 +554,8 @@ Set-ItemProperty -Path $OfficeIdentityPath -Name "DisableADALatopWAMOverride" -V
 # 2. Disable AAD Auto-Activation (Prevents it from guessing the @onmicrosoft account)
 Set-ItemProperty -Path $OfficeIdentityPath -Name "DisableAADAutoActivation" -Value 1 -Type DWORD -Force
 
-# 3. Shared Computer Licensing is set earlier (1 for Pooled, 0 for Personal)
-$OfficeRegPath = "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration"
-Set-ItemProperty -Path $OfficeRegPath -Name "SharedComputerLicensing" -Value 0 -Type DWORD -Force
-
 # Prevent Windows from trying to 'help' with the wrong Entra ID account
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\TestHooks" -Name "WebAccountManager" -Value 1 -Type DWORD -Force
+########## DISBALED ########## Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\TestHooks" -Name "WebAccountManager" -Value 1 -Type DWORD -Force
 
 # --- ADOBE PERSONAL LICENSE PERSISTENCE ---
 $AdobePaths = @(
@@ -489,15 +595,23 @@ Write-Host "Adobe Security Configured: Protected Mode ON, AppContainer OFF, New 
 
 
 
+# Removing this one as I don't think it's a current problem (TPM error was earlier in deployment testing, and Gemini suggested this for
+# 1) DPAPI / Entra ID Protection Fix
+# 2) Critical for remembering passwords/tokens in a non-native Entra environment
+# $cryptoPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb"
+# if (!(Test-Path $cryptoPath)) { New-Item $cryptoPath -Force }
+# Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
+# Microsoft 365 Apps activation error: “Trusted Platform Module malfunctioned”
+# When you try to activate Microsoft 365 apps, you encounter the error:
+# ... Trusted Platform Module malfunctioned
+# https://learn.microsoft.com/en-us/troubleshoot/microsoft-365-apps/activation/tpm-malfunctioned
 
-
-# Critical for remembering passwords/tokens in a non-native Entra environment
-$cryptoPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\Protect\Providers\df9d8cd0-1501-11d1-8c7a-00c04fc297eb"
-if (!(Test-Path $cryptoPath)) { New-Item $cryptoPath -Force }
-Set-ItemProperty -Path $cryptoPath -Name "ProtectionPolicy" -Value 1 -Type DWORD -Force
-
+# Removing this one as initial set up should not have conflicting/cached credentials that need to be cleared.
+# This seems more appropriate for troubleshooting after the initial base install.
 # Clear System-level identity stubs to prevent Token Broker loops
-Get-ChildItem -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+# Get-ChildItem -Path "HKLM:\SOFTWARE\Microsoft\IdentityStore\Cache" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+
+
 
 # Cosmetic Adjustments
 # Delete the Edge Shortcut from the Public Desktop
