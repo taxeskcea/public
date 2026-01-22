@@ -40,13 +40,15 @@ foreach ($p in @($fslogixProfilePath, $fslogixODFCPath)) {
     if (!(Test-Path $p)) { New-Item -Path $p -Force -ErrorAction SilentlyContinue | Out-Null }
 }
 
+
 # Core Profile Settings
+# Reference: https://learn.microsoft.com/en-us/fslogix/reference-configuration-settings?tabs=profiles
+
 Set-ItemProperty -Path $fslogixProfilePath -Name "VolumeType" -Value "vhdx" -Type String -Force
 # Type: REG_SZ
 # Default Value: vhd
 # Data values and use:
 # A value of vhd means that newly created files should be of type VHD. A value of vhdx means that newly created files should be of type VHDX.
-
 
 Set-ItemProperty -Path $fslogixProfilePath -Name "Enabled" -Value 1 -Type DWORD -Force 
 # (required setting)
@@ -56,7 +58,7 @@ Set-ItemProperty -Path $fslogixProfilePath -Name "Enabled" -Value 1 -Type DWORD 
 # 0: Profile containers disabled.
 # 1: Profile containers enabled.
 
-Set-ItemProperty -Path $fslogixProfilePath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force # Added but not 100% sure necessary
+Set-ItemProperty -Path $fslogixProfilePath -Name "VHDLocations" -Value $storagePath -Type MultiString -Force
 # (required setting)
 # Type: MULTI_SZ or REG_SZ
 # Default Value: N/A
@@ -66,6 +68,13 @@ Set-ItemProperty -Path $fslogixProfilePath -Name "VHDLocations" -Value $storageP
 # in the path. The path supports the use of the FSLogix custom variables or any environment variables that are 
 # available to the user during the sign in process. When specified as a REG_SZ value, multiple locations must be separated with a semi-colon (;).
 
+Set-ItemProperty -Path $fslogixProfilePath -Name "RedirXMLSourceFolder" New-ItemProperty -Value $storagePath -PropertyType String -Force
+# Type: REG_SZ
+# Default Value: N/A
+# Data values and use:
+# Path where FSLogix looks for the redirections.xml file to copy from and into the user's profile. The path supports
+# the use of the FSLogix custom variables or any environment variables that are available to the user during the 
+# sign in process. For example, C:\Windows\System32 or \\<server-name>\<share-name>
 
 Set-ItemProperty -Path $fslogixProfilePath -Name "RoamIdentity" -Value 1 -Type DWORD -Force
 # 0: Don't roam identity data. (recommended)
@@ -101,12 +110,12 @@ Set-ItemProperty -Path $fslogixProfilePath -Name "DeleteLocalProfileWhenVHDShoul
 # 0: Disabled.
 # 1: Enable single-user search.
 # 2: Enable multi-user search.
-#
 
-if (!(Test-Path $fslogixODFCPath)) { 
-    New-Item -Path "HKLM:\SOFTWARE\FSLogix" -ErrorAction SilentlyContinue
-    New-Item -Path $fslogixODFCPath -Force 
-}
+
+########################################################################################################################
+
+# ODFC Settings
+# Reference: https://learn.microsoft.com/en-us/fslogix/reference-configuration-settings?tabs=odfc
 
 Set-ItemProperty -Path $fslogixODFCPath -Name "VolumeType" -Type String -Value "vhdx" -Force
 # Type: REG_SZ
